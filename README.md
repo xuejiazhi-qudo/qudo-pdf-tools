@@ -3,7 +3,6 @@
 **An offline, fully local desktop PDF toolkit** — built on PySide6 (Qt) and PyMuPDF. 21 tools covering merge, split, organize, crop, rotate, compress, encrypt/decrypt, redact, annotate, watermark, page numbers, fill & sign, content editing, text/image extraction, metadata cleaning, and Word/Excel export. No uploads, no server, no telemetry.
 
 [English](#english) | [中文](#中文)
-<img width="3060" height="1845" alt="image" src="https://github.com/user-attachments/assets/0c64f76b-29b3-48c0-b961-8b8aa8adbd47" />
 
 ---
 
