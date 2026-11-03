@@ -5,6 +5,8 @@
 [English](#english) | [中文](#中文)
 
 ---
+<img width="3057" height="1764" alt="image" src="https://github.com/user-attachments/assets/265f9004-9b84-4b1e-a554-c22b14534229" />
+
 
 <a id="english"></a>
 ## English
