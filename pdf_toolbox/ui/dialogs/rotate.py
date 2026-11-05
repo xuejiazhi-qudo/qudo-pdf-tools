@@ -54,7 +54,8 @@ class RotateDialog(ToolDialog):
             return
 
         self.doc.snapshot()
-        count = pages.rotate_pages(self.doc.fitz_doc, targets, self._angle)
+        with self.doc.lock:
+            count = pages.rotate_pages(self.doc.fitz_doc, targets, self._angle)
         self.doc.mark_dirty(structural=True)
         info(self, "旋转完成", f"已旋转 {count} 页（{self._angle:+d}°）。记得保存。")
 

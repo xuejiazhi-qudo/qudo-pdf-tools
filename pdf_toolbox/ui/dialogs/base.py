@@ -83,6 +83,14 @@ class ToolDialog(QDialog):
     def on_run(self) -> None:
         raise NotImplementedError
 
+
+    def run_locked(self, title: str, fn, *args, **kwargs):
+        """后台任务里操作当前文档时必须持锁（渲染线程也在用同一个 Document）。"""
+        def _wrap(*a, **kw):
+            with self.doc.lock:
+                return fn(*a, **kw)
+        return self.run(title, _wrap, *args, **kwargs)
+
     def run(self, title: str, fn: Callable[..., Any], *args: Any,
             on_done: Optional[Callable[[Any], None]] = None, **kwargs: Any) -> None:
         self.set_running(True)

@@ -117,28 +117,29 @@ class CropDialog(ToolDialog):
             return
 
         self.doc.snapshot()
-        if self._tabs.currentIndex() == 0:
-            report = crop_ops.auto_crop_pages(
-                self.doc.fitz_doc,
-                targets,
-                sensitivity=self._sensitivity.currentData(),
-                safety_mm=self._safety.value(),
-                unify=self._unify.isChecked(),
-            )
-            same = "，裁完尺寸一致" if report.all_same_size else ""
-            self._result.setText(i18n.translate(
-                f"已裁剪 {len(report.processed)} 页，跳过 {len(report.skipped)} 页（空白或无法检测）{same}。"
-            ))
-        else:
-            unit = self._unit.currentText()
-            margins = crop_ops.CropMargins(
-                top=crop_ops.to_points(self._top.value(), unit),
-                right=crop_ops.to_points(self._right.value(), unit),
-                bottom=crop_ops.to_points(self._bottom.value(), unit),
-                left=crop_ops.to_points(self._left.value(), unit),
-            )
-            report = crop_ops.manual_crop_pages(self.doc.fitz_doc, targets, margins)
-            self._result.setText(i18n.translate(f"已裁剪 {len(report.processed)} 页，跳过 {len(report.skipped)} 页。"))
+        with self.doc.lock:
+            if self._tabs.currentIndex() == 0:
+                report = crop_ops.auto_crop_pages(
+                    self.doc.fitz_doc,
+                    targets,
+                    sensitivity=self._sensitivity.currentData(),
+                    safety_mm=self._safety.value(),
+                    unify=self._unify.isChecked(),
+                )
+                same = "，裁完尺寸一致" if report.all_same_size else ""
+                self._result.setText(i18n.translate(
+                    f"已裁剪 {len(report.processed)} 页，跳过 {len(report.skipped)} 页（空白或无法检测）{same}。"
+                ))
+            else:
+                unit = self._unit.currentText()
+                margins = crop_ops.CropMargins(
+                    top=crop_ops.to_points(self._top.value(), unit),
+                    right=crop_ops.to_points(self._right.value(), unit),
+                    bottom=crop_ops.to_points(self._bottom.value(), unit),
+                    left=crop_ops.to_points(self._left.value(), unit),
+                )
+                report = crop_ops.manual_crop_pages(self.doc.fitz_doc, targets, margins)
+                self._result.setText(i18n.translate(f"已裁剪 {len(report.processed)} 页，跳过 {len(report.skipped)} 页。"))
 
         self.doc.mark_dirty(structural=True)
         info(self, "裁剪完成", self._result.text() + "\n记得保存。")
@@ -146,7 +147,8 @@ class CropDialog(ToolDialog):
     def reset_crop(self) -> None:
         targets = self._targets()
         self.doc.snapshot()
-        n = crop_ops.reset_crop(self.doc.fitz_doc, targets)
+        with self.doc.lock:
+            n = crop_ops.reset_crop(self.doc.fitz_doc, targets)
         self.doc.mark_dirty(structural=True)
         info(self, "已恢复", f"已恢复 {n} 页的原始尺寸。")
 

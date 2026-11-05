@@ -7,6 +7,7 @@ import sys
 from typing import List, Optional
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
 
 from . import APP_NAME, ORG_NAME, __version__
 from .ui.mainwindow import MainWindow
@@ -16,6 +17,10 @@ from .ui.theme import APP_STYLE
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     app = QApplication(argv)
+    bundle_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    app_icon = os.path.join(bundle_root, "QudoPDF.ico")
+    if os.path.isfile(app_icon):
+        app.setWindowIcon(QIcon(app_icon))
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
     app.setApplicationVersion(__version__)

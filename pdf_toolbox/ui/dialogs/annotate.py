@@ -342,7 +342,8 @@ class AnnotatePanel(QWidget):
     def _add(self, spec: ann.AnnotationSpec) -> None:
         self.doc.snapshot()
         try:
-            ann.add_annotation(self.doc.fitz_doc, spec)
+            with self.doc.lock:
+                ann.add_annotation(self.doc.fitz_doc, spec)
         except ValueError as exc:
             warn(self, "无法添加标注", str(exc))
             return
@@ -376,7 +377,8 @@ class AnnotatePanel(QWidget):
             return
         page, xref = self.selected
         self.doc.snapshot()
-        ann.update_annotation(
+        with self.doc.lock:
+            ann.update_annotation(
             self.doc.fitz_doc, page, xref,
             color=self._color.hex(),
             fill_color=None if self._no_fill.isChecked() else self._fill.hex(),
@@ -393,7 +395,8 @@ class AnnotatePanel(QWidget):
             return
         page, xref = self.selected
         self.doc.snapshot()
-        ann.delete_annotation(self.doc.fitz_doc, page, xref)
+        with self.doc.lock:
+            ann.delete_annotation(self.doc.fitz_doc, page, xref)
         self.selected = None
         self.doc.mark_dirty()
         self.refresh_list()
@@ -403,7 +406,8 @@ class AnnotatePanel(QWidget):
             return
         page, xref = self.selected
         self.doc.snapshot()
-        ann.duplicate_annotation(self.doc.fitz_doc, page, xref)
+        with self.doc.lock:
+            ann.duplicate_annotation(self.doc.fitz_doc, page, xref)
         self.doc.mark_dirty()
         self.refresh_list()
 
@@ -418,7 +422,8 @@ class AnnotatePanel(QWidget):
         if ret != QMessageBox.Yes:
             return
         self.doc.snapshot()
-        count = ann.flatten_annotations(self.doc.fitz_doc)
+        with self.doc.lock:
+            count = ann.flatten_annotations(self.doc.fitz_doc)
         self.doc.mark_dirty()
         self.selected = None
         self.refresh_list()

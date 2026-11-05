@@ -232,7 +232,7 @@ class WatermarkDialog(ToolDialog):
             self.doc.mark_dirty()
             info(self, "水印已添加", f"已处理 {count} 页。记得保存。")
 
-        self.run("添加水印", stamp.apply_watermark, self.doc.fitz_doc, settings, on_done=_done)
+        self.run_locked("添加水印", stamp.apply_watermark, self.doc.fitz_doc, settings, on_done=_done)
 
 
 def create(parent, doc: PdfDoc) -> WatermarkDialog:

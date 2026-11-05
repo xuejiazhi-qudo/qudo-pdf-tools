@@ -15,6 +15,8 @@ ONEDIR = os.environ.get("QUDOPDF_ONEDIR") == "1"
 datas = []
 binaries = []
 hiddenimports = []
+ICON_PATH = os.path.join(SPECPATH, "QudoPDF.ico")
+datas.append((ICON_PATH, "."))
 
 # 这些包带二进制/数据文件/动态子模块，静态分析抓不全，整包收集
 for pkg in ("pymupdf", "fitz", "docx", "pymupdf4llm", "openpyxl"):
@@ -74,6 +76,18 @@ a = Analysis(
     noarchive=False,
 )
 
+# The build host's PATH contains Poppler's ICU 78 DLLs. They export versioned
+# symbols, while Qt6Core expects the unversioned Windows ICU API. Shipping the
+# Poppler copies makes QtWidgets fail to load with ERROR_PROC_NOT_FOUND, so
+# leave ICU resolution to Windows instead of bundling these unrelated DLLs.
+a.binaries = [
+    entry for entry in a.binaries
+    if not (
+        os.path.basename(entry[1]).lower().startswith("icu")
+        and "\\poppler\\library\\bin\\" in entry[1].lower()
+    )
+]
+
 pyz = PYZ(a.pure)
 
 if ONEDIR:
@@ -93,6 +107,7 @@ if ONEDIR:
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
+        icon=ICON_PATH,
     )
     coll = COLLECT(
         exe,
@@ -123,5 +138,5 @@ else:
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
-        icon=None,
+        icon=ICON_PATH,
     )

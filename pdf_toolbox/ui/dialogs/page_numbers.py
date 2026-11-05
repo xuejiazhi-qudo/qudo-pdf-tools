@@ -222,7 +222,7 @@ class PageNumbersDialog(ToolDialog):
             self.doc.mark_dirty()
             info(self, "页码已添加", f"处理 {report['processed']} 页，跳过 {report['skipped']} 页。记得保存。")
 
-        self.run("添加页码", stamp.apply_page_numbers, self.doc.fitz_doc, settings, on_done=_done)
+        self.run_locked("添加页码", stamp.apply_page_numbers, self.doc.fitz_doc, settings, on_done=_done)
 
 
 def create(parent, doc: PdfDoc) -> PageNumbersDialog:

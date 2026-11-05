@@ -178,7 +178,8 @@ class MetadataDialog(ToolDialog):
     def apply_edits(self) -> None:
         values = {key: edit.text() for key, edit in self._fields.items()}
         self.doc.snapshot()
-        extract.set_metadata_values(self.doc.fitz_doc, values)
+        with self.doc.lock:
+            extract.set_metadata_values(self.doc.fitz_doc, values)
         self.doc.mark_dirty()
         info(self, "已写入", "元数据已更新，记得保存。")
         self.scan()
@@ -211,7 +212,8 @@ class MetadataDialog(ToolDialog):
                 return
 
         self.doc.snapshot()
-        removed = extract.clean_metadata(self.doc.fitz_doc, options)
+        with self.doc.lock:
+            removed = extract.clean_metadata(self.doc.fitz_doc, options)
         self.doc.mark_dirty()
         cleared = removed.get("metadata", {})
         info(

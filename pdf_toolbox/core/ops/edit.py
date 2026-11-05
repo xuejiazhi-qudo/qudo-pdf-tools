@@ -157,7 +157,8 @@ def replace_text(
     # 略微外扩，确保覆盖字形边缘
     rect = pymupdf.Rect(rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1)
 
-    page.add_redact_annot(rect, fill=None)
+    rot, derot = _rot_comp(page)
+    page.add_redact_annot((rect * derot) if derot else rect, fill=None)
     page.apply_redactions(
         images=pymupdf.PDF_REDACT_IMAGE_NONE,
         graphics=0,
@@ -182,7 +183,8 @@ def replace_text(
 
 def remove_region(page: pymupdf.Page, rect: pymupdf.Rect) -> None:
     """删除矩形区域内的文字与矢量图形（不动图片像素）。"""
-    page.add_redact_annot(rect, fill=None)
+    rot, derot = _rot_comp(page)
+    page.add_redact_annot((rect * derot) if derot else rect, fill=None)
     page.apply_redactions(
         images=pymupdf.PDF_REDACT_IMAGE_NONE,
         graphics=1,
@@ -256,7 +258,9 @@ def move_text_lines(
     if not lines:
         return 0
 
-    page.add_redact_annot(rect, fill=None)
+    rot, derot = _rot_comp(page)
+    redact_rect = (rect * derot) if derot else rect
+    page.add_redact_annot(redact_rect, fill=None)
     page.apply_redactions(
         images=pymupdf.PDF_REDACT_IMAGE_NONE,
         graphics=0,
@@ -266,12 +270,14 @@ def move_text_lines(
     for ln in lines:
         font = _font_for(ln.text, "helv")
         base = pymupdf.Point(ln.rect[0] + dx, ln.rect[1] + dy + ln.size * 0.8)
+        base_u = base * derot if derot else base
         page.insert_text(
-            base,
+            base_u,
             ln.text,
             fontsize=ln.size,
             fontname=font,
             color=ln.color,
+            morph=(base_u, pymupdf.Matrix(rot)) if rot else None,
         )
     return len(lines)
 
@@ -302,15 +308,26 @@ def move_image(
     if not data:
         return False
 
-    page.add_redact_annot(bbox, fill=None)
+    rot0, derot0 = _rot_comp(page)
+    page.add_redact_annot((bbox * derot0) if derot0 else bbox, fill=None)
     page.apply_redactions(
         images=pymupdf.PDF_REDACT_IMAGE_REMOVE,
         graphics=0,
         text=pymupdf.PDF_REDACT_TEXT_NONE,
     )
     moved = pymupdf.Rect(bbox.x0 + dx, bbox.y0 + dy, bbox.x1 + dx, bbox.y1 + dy)
-    page.insert_image(moved, stream=data)
+    rot, derot = _rot_comp(page)
+    moved_u = (moved * derot) if derot else moved
+    page.insert_image(moved_u, stream=data, rotate=rot)
     return True
+
+
+def _rot_comp(page: pymupdf.Page):
+    """返回 (页面旋转角, 显示坐标->未旋转坐标矩阵)。插入类 API 写未旋转坐标系。"""
+    rot = page.rotation % 360
+    derot = page.derotation_matrix if rot else None
+    return rot, derot
+
 
 
 def _trial_rc(
@@ -318,6 +335,7 @@ def _trial_rc(
     rect: pymupdf.Rect,
     text: str,
     kwargs: Dict,
+    derot=None,
 ) -> float:
     """在一次性临时页上试排测量剩余空间。
 
@@ -327,7 +345,10 @@ def _trial_rc(
     tmp = pymupdf.open()
     try:
         tp = tmp.new_page(width=page.rect.width, height=page.rect.height)
-        return float(tp.insert_textbox(rect, text, render_mode=3, **kwargs))
+        probe = (rect * derot) if derot is not None else rect
+        trial_kwargs = dict(kwargs)
+        trial_kwargs.pop("rotate", None)
+        return float(tp.insert_textbox(probe, text, render_mode=3, **trial_kwargs))
     finally:
         tmp.close()
 
@@ -402,18 +423,25 @@ def insert_text_box(
         fill_opacity=opacity,
     )
 
+    rot, derot = _rot_comp(page)
+    if derot is not None:
+        kwargs = dict(kwargs)
+        kwargs["rotate"] = rot
+
     used = pymupdf.Rect(rect)
-    rc = _trial_rc(page, used, text, kwargs)
+    rc = _trial_rc(page, used, text, kwargs, derot)
     if rc < 0 and auto_expand:
+        limit = (page.rect * derot).height - 2 if derot else page.rect.height - 2
         grown = pymupdf.Rect(
             used.x0, used.y0, used.x1,
-            min(page.rect.height - 2, used.y1 + (-rc) + fontsize),
+            min(limit, used.y1 + (-rc) + fontsize),
         )
-        rc2 = _trial_rc(page, grown, text, kwargs)
+        rc2 = _trial_rc(page, grown, text, kwargs, derot)
         if rc2 >= 0 or rc2 > rc:
             used, rc = grown, rc2
 
-    rc = page.insert_textbox(used, text, **kwargs)
+    used_u = (used * derot) if derot else used
+    rc = page.insert_textbox(used_u, text, **kwargs)
     return rc, used
 
 
@@ -425,10 +453,12 @@ def insert_image_rect(
     keep_aspect: bool = True,
 ) -> None:
     """按矩形插入图片；keep_aspect 为真时等比缩放居中。"""
+    rot, derot = _rot_comp(page)
+    rect_u = (rect * derot) if derot else rect
     if path is not None:
-        page.insert_image(rect, filename=path, keep_proportion=keep_aspect)
+        page.insert_image(rect_u, filename=path, keep_proportion=keep_aspect, rotate=rot)
     elif stream is not None:
-        page.insert_image(rect, stream=stream, keep_proportion=keep_aspect)
+        page.insert_image(rect_u, stream=stream, keep_proportion=keep_aspect, rotate=rot)
     else:
         raise ValueError("insert_image_rect 需要 path 或 stream")
 

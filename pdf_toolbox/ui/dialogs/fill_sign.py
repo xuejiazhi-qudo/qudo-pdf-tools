@@ -15,15 +15,17 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ...core.doc import PdfDoc
+from ...core.ops import edit as edit_ops
 from .. import i18n
 from ...core.ops import stamp
 from ..viewer import PdfView
-from ..widgets import info, warn
+from ..widgets import ColorButton, info, warn
 from ..widgets.signature import get_signature
 
 TOOLS = [
@@ -119,6 +121,21 @@ class FillSignPanel(QWidget):
             tl.addWidget(btn)
         layout.addWidget(tools)
 
+        style_group = QGroupBox("文字样式")
+        sl = QFormLayout(style_group)
+        sl.setLabelAlignment(Qt.AlignRight)
+        self._font = QComboBox()
+        for key, label, _fn, _ff, _fam in edit_ops.FONT_CHOICES:
+            self._font.addItem(label, key)
+        sl.addRow("字体", self._font)
+        self._size = QSpinBox()
+        self._size.setRange(6, 96)
+        self._size.setValue(12)
+        sl.addRow("字号", self._size)
+        self._color = ColorButton("#000000")
+        sl.addRow("颜色", self._color)
+        layout.addWidget(style_group)
+
         form_group = QGroupBox("表单字段填写")
         fl = QFormLayout(form_group)
         fl.setLabelAlignment(Qt.AlignRight)
@@ -162,14 +179,18 @@ class FillSignPanel(QWidget):
     def place_at(self, page: int, point: QPointF) -> None:
         tool = self.tool
         element: Optional[stamp.FillElement] = None
+        font_key = self._font.currentData()
+        size = float(self._size.value())
+        color = self._color.rgb01()
 
         if tool == stamp.KIND_TEXT:
             text, ok = QInputDialog.getText(self, i18n.translate("添加文字"), i18n.translate("输入文字："))
             if not ok or not text:
                 return
-            w, h, fs = DEFAULT_SIZES[stamp.KIND_TEXT]
+            w, h, _fs = DEFAULT_SIZES[stamp.KIND_TEXT]
             element = stamp.FillElement(kind=tool, page=page, x=point.x(), y=point.y(),
-                                        width=w, height=h, text=text, font_size=fs)
+                                        width=max(w, len(text) * size * 0.7), height=h,
+                                        text=text, font_size=size, color=color, font_key=font_key)
         elif tool == stamp.KIND_DATE:
             text, ok = QInputDialog.getItem(
                 self, i18n.translate("日期格式"), i18n.translate("选择格式："),
@@ -177,17 +198,19 @@ class FillSignPanel(QWidget):
             )
             if not ok:
                 return
-            w, h, fs = DEFAULT_SIZES[stamp.KIND_DATE]
+            w, h, _fs = DEFAULT_SIZES[stamp.KIND_DATE]
             element = stamp.FillElement(kind=tool, page=page, x=point.x(), y=point.y(),
                                         width=w, height=h,
-                                        text=stamp.format_date(None, text), font_size=fs)
+                                        text=stamp.format_date(None, text), font_size=size,
+                                        color=color, font_key=font_key)
         elif tool == stamp.KIND_INITIALS:
             text, ok = QInputDialog.getText(self, i18n.translate("首字母缩写"), i18n.translate("输入缩写："))
             if not ok or not text:
                 return
-            w, h, fs = DEFAULT_SIZES[stamp.KIND_INITIALS]
+            w, h, _fs = DEFAULT_SIZES[stamp.KIND_INITIALS]
             element = stamp.FillElement(kind=tool, page=page, x=point.x(), y=point.y(),
-                                        width=w, height=h, text=text, font_size=fs)
+                                        width=w, height=h, text=text, font_size=size,
+                                        color=color, font_key=font_key)
         elif tool == "signature":
             data = get_signature(self)
             if not data:
@@ -201,7 +224,8 @@ class FillSignPanel(QWidget):
                                         width=w, height=h, font_size=fs)
 
         self.doc.snapshot()
-        stamp.apply_fill_elements(self.doc.fitz_doc, [element])
+        with self.doc.lock:
+            stamp.apply_fill_elements(self.doc.fitz_doc, [element])
         self._placed += 1
         self.doc.mark_dirty()
         self._status.setText(i18n.translate(f"已放置 {self._placed} 个元素。记得保存。"))

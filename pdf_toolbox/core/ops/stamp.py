@@ -108,17 +108,28 @@ def _anchor(page: pymupdf.Page, s: WatermarkSettings) -> pymupdf.Point:
     return pymupdf.Point(x, y)
 
 
-def _tile_anchors(page: pymupdf.Page, s: WatermarkSettings) -> List[pymupdf.Point]:
+def _tile_anchors(
+    page: pymupdf.Page,
+    s: WatermarkSettings,
+    footprint_w: float,
+    footprint_h: float,
+) -> List[pymupdf.Point]:
+    """Return a regular grid whose pitch leaves a little room between marks.
+
+    The UI values are treated as the requested center-to-center spacing, but
+    large or rotated marks need a larger pitch to avoid colliding.
+    """
     w, h = page.rect.width, page.rect.height
-    sx = max(20.0, s.tile_spacing_x)
-    sy = max(20.0, s.tile_spacing_y)
+    rotated_w, rotated_h = _rotated_bbox(footprint_w, footprint_h, s.rotation)
+    sx = max(20.0, s.tile_spacing_x, rotated_w + 16.0)
+    sy = max(20.0, s.tile_spacing_y, rotated_h + 16.0)
     out: List[pymupdf.Point] = []
     row = 0
     y = sy / 2
-    while y < h + sy:
+    while y < h:
         x = sx / 2
         shift = (sx / 2) if (s.staggered and row % 2 == 1) else 0.0
-        while x + shift < w + sx:
+        while x + shift < w:
             out.append(pymupdf.Point(x + shift, y))
             x += sx
         y += sy
@@ -155,15 +166,28 @@ def apply_watermark(
         page = doc.load_page(pno)
 
         if settings.mode == "tiled":
-            anchors = _tile_anchors(page, settings)
+            if settings.type == "text":
+                font = _font_for(settings.text, "hebo" if settings.bold else "helv")
+                mark_w = _text_width(page, settings.text, font, settings.font_size) * 1.2
+                mark_h = settings.font_size * 1.8
+            else:
+                mark_w = page.rect.width * max(0.05, min(1.0, settings.image_width_pct / 100.0)) * 1.1
+                mark_h = mark_w / img_aspect * 1.1 if img_aspect else mark_w
+            anchors = _tile_anchors(page, settings, mark_w, mark_h)
         else:
             anchors = [_anchor(page, settings)]
 
         for anchor in anchors:
             if settings.type == "text":
-                _draw_text_watermark(page, settings, anchor, color, overlay)
+                _draw_text_watermark(
+                    page, settings, anchor, color, overlay,
+                    clamp= settings.mode != "tiled",
+                )
             else:
-                _draw_image_watermark(page, settings, anchor, img_png, img_aspect, overlay)
+                _draw_image_watermark(
+                    page, settings, anchor, img_png, img_aspect, overlay,
+                    clamp=settings.mode != "tiled",
+                )
 
     pr.report(100, "完成")
     return len(targets)
@@ -201,29 +225,42 @@ def _clamp_anchor(
     return pymupdf.Point(x, y)
 
 
+def _page_rot(page: pymupdf.Page):
+    rot = page.rotation % 360
+    derot = page.derotation_matrix if rot else None
+    return rot, derot
+
+
+
 def _draw_text_watermark(
     page: pymupdf.Page,
     s: WatermarkSettings,
     anchor: pymupdf.Point,
     color: Tuple[float, float, float],
     overlay: bool,
+    clamp: bool = True,
 ) -> None:
     font = _font_for(s.text, "hebo" if s.bold else "helv")
     width = _text_width(page, s.text, font, s.font_size)
     # 安全系数：字体度量会低估实际墨迹宽度，字形也有上下伸部，宁可多留边也不出界
-    anchor = _clamp_anchor(page, anchor, width * 1.2, s.font_size * 1.8, s.rotation, inset=6)
+    if clamp:
+        anchor = _clamp_anchor(page, anchor, width * 1.2, s.font_size * 1.8, s.rotation, inset=6)
 
-    # 以锚点为旋转中心；水平/垂直居中在锚点上
+    # 以锚点为旋转中心；水平/垂直居中在锚点上；旋转页需换算并补偿方向
+    rot, derot = _page_rot(page)
     start = pymupdf.Point(anchor.x - width / 2, anchor.y + s.font_size * 0.35)
-    matrix = pymupdf.Matrix(s.rotation)
+    start_u = start * derot if derot else start
+    anchor_u = anchor * derot if derot else anchor
+    angle = s.rotation + rot
+    matrix = pymupdf.Matrix(angle)
     page.insert_text(
-        start,
+        start_u,
         s.text,
         fontsize=s.font_size,
         fontname=font,
         color=color,
         fill_opacity=s.opacity,
-        morph=(anchor, matrix),
+        morph=(anchor_u, matrix),
         overlay=overlay,
     )
 
@@ -252,22 +289,26 @@ def _draw_image_watermark(
     png: bytes,
     aspect: float,
     overlay: bool,
+    clamp: bool = True,
 ) -> None:
     w = page.rect.width * max(0.05, min(1.0, s.image_width_pct / 100.0))
     h = w / aspect if aspect else w
-    anchor = _clamp_anchor(page, anchor, w * 1.1, h * 1.1, s.rotation, inset=6)
+    if clamp:
+        anchor = _clamp_anchor(page, anchor, w * 1.1, h * 1.1, s.rotation, inset=6)
     rect = pymupdf.Rect(anchor.x - w / 2, anchor.y - h / 2, anchor.x + w / 2, anchor.y + h / 2)
 
-    if abs(s.rotation) < 0.5:
+    rot, derot = _page_rot(page)
+    rect_u = (rect * derot) if derot else rect
+    if abs(s.rotation) < 0.5 and rot == 0:
         page.insert_image(rect, stream=png, overlay=overlay)
         return
 
-    # 旋转：先画到临时页再 show_pdf_page 带旋转贴回
+    # 旋转：先画到临时页再 show_pdf_page 带旋转贴回（旋转页叠加补偿角）
     tmp = pymupdf.open()
     try:
         tp = tmp.new_page(width=max(1.0, w), height=max(1.0, h))
         tp.insert_image(tp.rect, stream=png)
-        page.show_pdf_page(rect, tmp, 0, rotate=int(round(s.rotation)), overlay=overlay)
+        page.show_pdf_page(rect_u, tmp, 0, rotate=int(round(s.rotation)) + rot, overlay=overlay)
     finally:
         tmp.close()
 
@@ -566,6 +607,7 @@ def _draw_vector_symbol(
     el: "FillElement",
     rect: pymupdf.Rect,
     color: Tuple[float, float, float],
+    morph=None,
 ) -> None:
     """用矢量图形画符号，避免依赖字体字形（内置字体缺 ✓✗ 等）。"""
     shape = page.new_shape()
@@ -580,20 +622,22 @@ def _draw_vector_symbol(
                 pymupdf.Point(x0 + rect.width * 0.92, y0 + rect.height * 0.12),
             ]
         )
-        shape.finish(color=color, width=width, stroke_opacity=el.opacity, closePath=False)
+        shape.finish(color=color, width=width, stroke_opacity=el.opacity,
+                     closePath=False, morph=morph)
     elif el.kind == KIND_CROSS:
         shape.draw_line(pymupdf.Point(x0, y0), pymupdf.Point(x1, y1))
         shape.draw_line(pymupdf.Point(x1, y0), pymupdf.Point(x0, y1))
-        shape.finish(color=color, width=width, stroke_opacity=el.opacity, closePath=False)
+        shape.finish(color=color, width=width, stroke_opacity=el.opacity,
+                     closePath=False, morph=morph)
     elif el.kind == KIND_DOT:
         center = pymupdf.Point(x0 + rect.width / 2, y0 + rect.height / 2)
         shape.draw_circle(center, min(rect.width, rect.height) / 2)
         shape.finish(color=color, fill=color, fill_opacity=el.opacity,
-                     stroke_opacity=el.opacity)
+                     stroke_opacity=el.opacity, morph=morph)
     elif el.kind == KIND_SQUARE:
         shape.draw_rect(rect)
         shape.finish(color=color, fill=color, fill_opacity=el.opacity,
-                     stroke_opacity=el.opacity)
+                     stroke_opacity=el.opacity, morph=morph)
 
     shape.commit()
 
@@ -625,6 +669,7 @@ class FillElement:
     opacity: float = 1.0
     rotation: float = 0.0
     font_family: str = "Helvetica"
+    font_key: str = ""
     align: str = "left"
     image_bytes: Optional[bytes] = None
 
@@ -657,10 +702,20 @@ def apply_fill_elements(
 
 def _draw_fill_element(page: pymupdf.Page, el: FillElement) -> None:
     color = _rgb(el.color)
-    rect = pymupdf.Rect(el.x, el.y, el.x + el.width, el.y + el.height)
+    rect_d = pymupdf.Rect(el.x, el.y, el.x + el.width, el.y + el.height)
+
+    # 页面可能带 /Rotate：插入 API 写的是未旋转坐标系，需换算并做反向补偿
+    rot = page.rotation % 360
+    derot = page.derotation_matrix if rot else None
+    rect = (rect_d * derot) if derot else rect_d
+    comp = pymupdf.Matrix(rot) if rot else None
+    center_u = rect.tl + (rect.br - rect.tl) * 0.5
 
     if el.kind in (KIND_DRAWN_SIG, KIND_IMAGE_SIG) and el.image_bytes:
-        page.insert_image(rect, stream=el.image_bytes, overlay=True)
+        page.insert_image(
+            rect, stream=el.image_bytes, overlay=True,
+            rotate=rot % 360,
+        )
         return
 
     if el.kind == KIND_HOLLOW_DOT:
@@ -668,28 +723,35 @@ def _draw_fill_element(page: pymupdf.Page, el: FillElement) -> None:
         shape.draw_circle(rect.tl + pymupdf.Point(rect.width / 2, rect.height / 2),
                           min(rect.width, rect.height) / 2)
         shape.finish(color=color, fill=None, width=max(0.5, el.font_size / 8),
-                     stroke_opacity=el.opacity)
+                     stroke_opacity=el.opacity,
+                     morph=(center_u, comp) if comp else None)
         shape.commit()
         return
 
     if el.kind == KIND_LINE:
         shape = page.new_shape()
-        mid_y = el.y + el.height / 2
-        shape.draw_line(pymupdf.Point(el.x, mid_y), pymupdf.Point(el.x + el.width, mid_y))
-        shape.finish(color=color, width=max(0.5, el.font_size / 8), stroke_opacity=el.opacity)
+        mid_y = rect.y0 + rect.height / 2
+        shape.draw_line(pymupdf.Point(rect.x0, mid_y), pymupdf.Point(rect.x1, mid_y))
+        shape.finish(color=color, width=max(0.5, el.font_size / 8),
+                     stroke_opacity=el.opacity,
+                     morph=(center_u, comp) if comp else None)
         shape.commit()
         return
 
     if el.kind in _VECTOR_SYMBOLS:
-        _draw_vector_symbol(page, el, rect, color)
+        _draw_vector_symbol(page, el, rect, color, morph=(center_u, comp) if comp else None)
         return
 
     text = el.text
-    font = _font_for(text, FONT_MAP.get(el.font_family, "helv"))
-    size = el.font_size
-
     if not text:
         return
+    if getattr(el, "font_key", ""):
+        from .edit import resolve_font
+
+        font, fontfile, _fam = resolve_font(el.font_key)
+    else:
+        font, fontfile = _font_for(text, FONT_MAP.get(el.font_family, "helv")), None
+    size = el.font_size
 
     width = _text_width(page, text, font, size)
     if el.align == "center":
@@ -698,17 +760,18 @@ def _draw_fill_element(page: pymupdf.Page, el: FillElement) -> None:
         x = el.x + el.width - width
     else:
         x = el.x
+    point_d = pymupdf.Point(x, el.y + el.height * 0.8)
+    point_u = point_d * derot if derot else point_d
 
-    morph = None
-    if abs(el.rotation) > 0.5:
-        pivot = pymupdf.Point(x, el.y + el.height)
-        morph = (pivot, pymupdf.Matrix(el.rotation))
+    angle = el.rotation + rot
+    morph = (point_u, pymupdf.Matrix(angle)) if abs(angle) > 0.5 else None
 
     page.insert_text(
-        pymupdf.Point(x, el.y + el.height * 0.8),
+        point_u,
         text,
         fontsize=size,
         fontname=font,
+        fontfile=fontfile,
         color=color,
         fill_opacity=el.opacity,
         morph=morph,
