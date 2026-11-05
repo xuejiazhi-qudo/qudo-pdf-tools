@@ -169,6 +169,38 @@ def apply_watermark(
     return len(targets)
 
 
+def _rotated_bbox(w: float, h: float, deg: float) -> Tuple[float, float]:
+    """矩形旋转 deg 度后的轴对齐包围盒尺寸。"""
+    import math
+
+    t = math.radians(deg)
+    c, s = abs(math.cos(t)), abs(math.sin(t))
+    return w * c + h * s, w * s + h * c
+
+
+def _clamp_anchor(
+    page: pymupdf.Page,
+    anchor: pymupdf.Point,
+    w: float,
+    h: float,
+    deg: float = 0.0,
+    inset: float = 2.0,
+) -> pymupdf.Point:
+    """把"以锚点为中心"的水印夹回页面内，避免靠边位置一半出界。"""
+    bw, bh = _rotated_bbox(w, h, deg)
+    px, py = page.rect.width, page.rect.height
+    half_w, half_h = bw / 2, bh / 2
+    if px > bw + inset * 2:
+        x = min(max(anchor.x, half_w + inset), px - half_w - inset)
+    else:
+        x = px / 2
+    if py > bh + inset * 2:
+        y = min(max(anchor.y, half_h + inset), py - half_h - inset)
+    else:
+        y = py / 2
+    return pymupdf.Point(x, y)
+
+
 def _draw_text_watermark(
     page: pymupdf.Page,
     s: WatermarkSettings,
@@ -178,6 +210,8 @@ def _draw_text_watermark(
 ) -> None:
     font = _font_for(s.text, "hebo" if s.bold else "helv")
     width = _text_width(page, s.text, font, s.font_size)
+    # 安全系数：字体度量会低估实际墨迹宽度，字形也有上下伸部，宁可多留边也不出界
+    anchor = _clamp_anchor(page, anchor, width * 1.2, s.font_size * 1.8, s.rotation, inset=6)
 
     # 以锚点为旋转中心；水平/垂直居中在锚点上
     start = pymupdf.Point(anchor.x - width / 2, anchor.y + s.font_size * 0.35)
@@ -221,6 +255,7 @@ def _draw_image_watermark(
 ) -> None:
     w = page.rect.width * max(0.05, min(1.0, s.image_width_pct / 100.0))
     h = w / aspect if aspect else w
+    anchor = _clamp_anchor(page, anchor, w * 1.1, h * 1.1, s.rotation, inset=6)
     rect = pymupdf.Rect(anchor.x - w / 2, anchor.y - h / 2, anchor.x + w / 2, anchor.y + h / 2)
 
     if abs(s.rotation) < 0.5:
