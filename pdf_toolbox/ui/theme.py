@@ -4,8 +4,11 @@ APP_STYLE = """
 QWidget {
     font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
     font-size: 13px;
+    color: #20242b;
 }
 QMainWindow, QDialog { background: #f4f5f7; }
+QMessageBox { background: #f4f5f7; color: #20242b; }
+QMessageBox QLabel { color: #20242b; background: transparent; }
 QToolBar {
     background: #ffffff;
     border-bottom: 1px solid #dcdfe4;
