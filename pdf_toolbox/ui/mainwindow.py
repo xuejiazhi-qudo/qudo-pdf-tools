@@ -456,7 +456,7 @@ class MainWindow(QMainWindow):
             f"<p>{i18n.translate('基于 PySide6 与 PyMuPDF 的离线 PDF 工具集，全部处理在本地完成，')}"
             f"{i18n.translate('不上传任何文件。')}</p>"
             f"<p>{i18n.translate('包含合并、拆分、压缩、加密、涂销、标注、')}"
-            f"{i18n.translate('水印、页码、填写签名、转 Word/Excel 等 20 项功能。')}</p>"
+            f"{i18n.translate('水印、印章、页码、填写签名、转 Word/Excel 等 22 项功能。')}</p>"
             f"<p>{i18n.translate('作者网站：')}<a href=\"https://www.qudo.cc\">https://www.qudo.cc</a><br>"
             f"{i18n.translate('作者邮箱：')}<a href=\"mailto:xuejiazhi@gmail.com\">xuejiazhi@gmail.com</a></p>"
         )

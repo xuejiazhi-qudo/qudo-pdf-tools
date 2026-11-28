@@ -24,6 +24,7 @@ from .dialogs import pdf_to_image
 from .dialogs import protect
 from .dialogs import redact
 from .dialogs import rotate
+from .dialogs import seal
 from .dialogs import split
 from .dialogs import unlock
 from .dialogs import watermark
@@ -44,6 +45,7 @@ DIALOG_MODULES = {
     "metadata": metadata,
     "new_pdf": new_pdf,
     "watermark": watermark,
+    "seal": seal,
     "page_numbers": page_numbers,
     "compress": compress,
     "protect": protect,

@@ -209,6 +209,12 @@ def _watermark(p: QPainter) -> None:
     _line(p, 9, 12, 15, 12)
 
 
+def _seal(p: QPainter) -> None:
+    _circle(p, 12, 12, 9)
+    _circle(p, 12, 12, 6.5)
+    _poly(p, [(12, 6), (13.5, 10), (18, 10), (14.5, 12.8), (16, 17), (12, 14.3), (8, 17), (9.5, 12.8), (6, 10), (10.5, 10)], closed=True)
+
+
 def _page_numbers(p: QPainter) -> None:
     _line(p, 9, 4, 7, 20)
     _line(p, 17, 4, 15, 20)
@@ -424,6 +430,7 @@ GLYPHS: Dict[str, Callable[[QPainter], None]] = {
     "extract_images": _extract_images,
     "metadata": _metadata,
     "watermark": _watermark,
+    "seal": _seal,
     "page_numbers": _page_numbers,
     "edit_content": _edit_content,
     "fill_sign": _fill_sign,

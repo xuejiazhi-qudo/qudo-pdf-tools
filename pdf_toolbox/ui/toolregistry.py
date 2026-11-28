@@ -1,4 +1,4 @@
-"""20 个 PDF 工具的注册表。"""
+"""22 个 PDF 工具的注册表。"""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ TOOLS: List[ToolDef] = [
     ToolDef("metadata", "PDF 元数据清除", "查看并清除标题/作者/XMP/附件等隐藏信息", GROUP_EXTRACT, "metadata"),
 
     ToolDef("watermark", "PDF 加水印", "文字或 Logo 水印，支持平铺与旋转", GROUP_EDIT, "watermark"),
+    ToolDef("seal", "PDF 印章", "上传印章图片或制作朱文/白文印章，支持骑缝盖章", GROUP_EDIT, "seal"),
     ToolDef("page_numbers", "PDF 添加页码", "页码 + 页眉页脚，9 种格式与镜像排版", GROUP_EDIT, "page_numbers"),
     ToolDef("edit_content", "PDF 内容编辑", "修改现有文字、删除区域、替换/删除图片", GROUP_EDIT, "edit_content", kind="mode"),
     ToolDef("fill_sign", "PDF 填写与签名", "添加文字/日期/符号/手写签名", GROUP_EDIT, "fill_sign", kind="mode"),
@@ -68,6 +69,7 @@ SHORT_LABELS: Dict[str, str] = {
     "extract_images": "提图片",
     "metadata": "元数据",
     "watermark": "水印",
+    "seal": "印章",
     "page_numbers": "页码",
     "edit_content": "改内容",
     "fill_sign": "填写签名",
