@@ -82,6 +82,9 @@ class Worker(QRunnable):
             result = self.fn(*self.args, **kwargs)
         except CancelledError:
             self.signals.cancelled.emit()
+        except PermissionError as exc:
+            # 文件被 Word 等程序占用属于可预期的用户操作问题，直接展示提示即可。
+            self.signals.failed.emit(str(exc))
         except Exception as exc:  # noqa: BLE001 - 统一上报给 UI
             detail = traceback.format_exc(limit=6)
             self.signals.failed.emit(f"{exc}\n\n{detail}")

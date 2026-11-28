@@ -289,6 +289,18 @@ def _pages(p: QPainter) -> None:
     _poly(p, [(4, 6), (4, 21), (17, 21)])
 
 
+def _website(p: QPainter) -> None:
+    _circle(p, 12, 12, 8)
+    _line(p, 4, 12, 20, 12)
+    _arc(p, 7, 4, 10, 16, -90, 180)
+    _arc(p, 7, 4, 10, 16, 90, 180)
+
+
+def _email(p: QPainter) -> None:
+    _rect(p, 3, 5, 18, 14)
+    _poly(p, [(4, 7), (12, 13), (20, 7)])
+
+
 def _sel_all(p: QPainter) -> None:
     _poly(p, [(7, 3), (20, 3), (20, 16)])
     _rect(p, 4, 7, 13, 13)
@@ -386,6 +398,8 @@ GLYPHS: Dict[str, Callable[[QPainter], None]] = {
     "next": _next,
     "outline": _outline,
     "pages": _pages,
+    "website": _website,
+    "email": _email,
     "sel_all": _sel_all,
     "sel_none": _sel_none,
     "sel_invert": _sel_invert,

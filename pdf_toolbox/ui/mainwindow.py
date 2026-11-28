@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import importlib
 import os
+import sys
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence
+from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QToolBar,
@@ -28,10 +30,26 @@ from . import dialogmodules
 from . import toolregistry as reg
 from . import icons
 from . import i18n
+from .history import HistoryPanel
 from .outline import OutlinePanel
 from .theme import human_size
 from .thumbnails import ThumbnailPanel
 from .viewer import PdfView
+
+
+def _delete_registry_tree(winreg, root, subkey: str) -> None:
+    """Delete a registry key and its children, ignoring an absent key."""
+    try:
+        with winreg.OpenKey(root, subkey, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+            while True:
+                try:
+                    child = winreg.EnumKey(key, 0)
+                except OSError:
+                    break
+                _delete_registry_tree(winreg, root, subkey + "\\" + child)
+        winreg.DeleteKey(root, subkey)
+    except FileNotFoundError:
+        return
 
 
 class MainWindow(QMainWindow):
@@ -44,16 +62,20 @@ class MainWindow(QMainWindow):
         self._mode_panels = {}
 
         self.view = PdfView(self.doc, self)
+        self.view.fileDropped.connect(self.open_file)
         self.setCentralWidget(self.view)
 
         self.thumbs = ThumbnailPanel(self.doc, self)
         self.outline = OutlinePanel(self.doc, self)
+        self.history = HistoryPanel(self)
 
         self._side_tabs = QTabWidget()
         self._side_tabs.addTab(self.outline, "目录")
         self._side_tabs.addTab(self.thumbs, "页面")
+        self._side_tabs.addTab(self.history, "历史")
         self._side_tabs.setTabIcon(0, icons.icon("outline", 16))
         self._side_tabs.setTabIcon(1, icons.icon("pages", 16))
+        self._side_tabs.setTabIcon(2, icons.icon("open", 16))
 
         dock = QDockWidget("导航", self)
         dock.setWidget(self._side_tabs)
@@ -62,6 +84,7 @@ class MainWindow(QMainWindow):
         self._thumb_dock = dock
 
         self.outline.gotoPage.connect(self.view.goto_page)
+        self.history.openRequested.connect(self._open_path)
         self.view.currentPageChanged.connect(self.outline.set_current)
         self.doc.structureChanged.connect(self._select_side_tab)
 
@@ -90,6 +113,8 @@ class MainWindow(QMainWindow):
             icons.icon("new"), "新建", self.new_pdf, QKeySequence.New
         )
         self.act_open = file_menu.addAction(icons.icon("open"), "打开(&O)…", self.open_file, QKeySequence.Open)
+        file_menu.addAction("注册 PDF 右键打开", self.register_pdf_context_menu)
+        file_menu.addAction("移除 PDF 右键菜单", self.unregister_pdf_context_menu)
         file_menu.addAction("重新打开", self.reopen)
         file_menu.addSeparator()
         self.act_save = file_menu.addAction(icons.icon("save"), "保存(&S)", self.save, QKeySequence.Save)
@@ -129,6 +154,7 @@ class MainWindow(QMainWindow):
 
     def _apply_language(self) -> None:
         i18n.retranslate_widget(self)
+        self.history.refresh()
         self._update_status()
         self._update_title()
 
@@ -166,6 +192,18 @@ class MainWindow(QMainWindow):
         self._page_total = QLabel("/ 0")
         tb.addWidget(self._page_total)
         tb.addAction(icons.icon("next"), "下一页", lambda: self.view.goto_page(self.view.current_page + 1))
+
+        spacer = QWidget(tb)
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
+        tb.addAction(
+            icons.icon("website"), "www.qudo.cc",
+            lambda: QDesktopServices.openUrl(QUrl("https://www.qudo.cc")),
+        ).setToolTip("打开作者网站")
+        tb.addAction(
+            icons.icon("email"), "xuejiazhi@gmail.com",
+            lambda: QDesktopServices.openUrl(QUrl("mailto:xuejiazhi@gmail.com")),
+        ).setToolTip("给作者发送邮件")
 
         # 第二行：全部工具的快捷按钮（独占一行）
         self._mode_actions = {}
@@ -219,7 +257,8 @@ class MainWindow(QMainWindow):
         self.act_redo.setEnabled(has and self.doc.can_redo)
 
     def _select_side_tab(self, *_args) -> None:
-        self._side_tabs.setCurrentIndex(0 if self.outline.has_outline else 1)
+        if self._side_tabs.currentIndex() in (0, 1):
+            self._side_tabs.setCurrentIndex(0 if self.outline.has_outline else 1)
 
     def _update_status(self, *_args) -> None:
         n = self.doc.page_count
@@ -283,11 +322,84 @@ class MainWindow(QMainWindow):
 
         self.view.set_zoom(1.0)
         self.view.fit_width()
+        self.history.remember(path)
         return True
 
     def reopen(self) -> None:
         if self.doc.path:
             self._open_path(self.doc.path)
+
+    def register_pdf_context_menu(self) -> None:
+        """Register direct and Open with verbs for PDFs for this Windows user."""
+        try:
+            import subprocess
+            import winreg
+            import ctypes
+
+            if getattr(sys, "frozen", False):
+                command = subprocess.list2cmdline([sys.executable, "%1"])
+                icon_path = sys.executable
+                app_id = os.path.basename(sys.executable)
+            else:
+                command = subprocess.list2cmdline(
+                    [sys.executable, os.path.abspath(sys.argv[0]), "%1"]
+                )
+                icon_path = os.path.abspath(sys.argv[0])
+                app_id = "QudoPDF-dev.exe"
+
+            key_path = r"Software\Classes\SystemFileAssociations\.pdf\shell\QudoPDF"
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, "使用 QudoPDF 打开")
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon_path)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path + r"\command") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
+
+            # Also advertise the app through Windows' standard "Open with" list.
+            app_key = rf"Software\Classes\Applications\{app_id}"
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER, app_key + r"\shell\open\command"
+            ) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER, app_key + r"\SupportedTypes"
+            ) as key:
+                winreg.SetValueEx(key, ".pdf", 0, winreg.REG_SZ, "")
+            # Tell Explorer to refresh its cached file-association data.
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+        except (ImportError, OSError) as exc:
+            QMessageBox.warning(self, i18n.translate("注册失败"), str(exc))
+            return
+        QMessageBox.information(
+            self, i18n.translate("注册完成"),
+            i18n.translate("现在可以在 PDF 文件上右键，选择“使用 QudoPDF 打开”。"),
+        )
+
+    def unregister_pdf_context_menu(self) -> None:
+        """Remove QudoPDF's current-user direct and Open with registrations."""
+        try:
+            import winreg
+            import ctypes
+
+            key_path = r"Software\Classes\SystemFileAssociations\.pdf\shell\QudoPDF"
+            app_id = (
+                os.path.basename(sys.executable)
+                if getattr(sys, "frozen", False)
+                else "QudoPDF-dev.exe"
+            )
+            _delete_registry_tree(winreg, winreg.HKEY_CURRENT_USER, key_path)
+            _delete_registry_tree(
+                winreg,
+                winreg.HKEY_CURRENT_USER,
+                rf"Software\Classes\Applications\{app_id}",
+            )
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+        except FileNotFoundError:
+            QMessageBox.information(self, i18n.translate("未注册"), i18n.translate("未找到 QudoPDF 的右键菜单项。"))
+            return
+        except (ImportError, OSError) as exc:
+            QMessageBox.warning(self, i18n.translate("移除失败"), str(exc))
+            return
+        QMessageBox.information(self, i18n.translate("已移除"), i18n.translate("QudoPDF 右键菜单项已移除。"))
 
     def _apply_pending_elements(self) -> None:
         for _key, (panel, _dock) in list(self._mode_panels.items()):
@@ -333,14 +445,25 @@ class MainWindow(QMainWindow):
             self._update_title()
 
     def about(self) -> None:
-        QMessageBox.about(
-            self,
-            i18n.translate(f"关于 {APP_NAME}"),
-            f"{APP_NAME} v{__version__}\n\n"
-            + i18n.translate("基于 PySide6 与 PyMuPDF 的离线 PDF 工具集，全部处理在本地完成，")
-            + i18n.translate("不上传任何文件。\n\n包含合并、拆分、压缩、加密、涂销、标注、")
-            + i18n.translate("水印、页码、填写签名、转 Word/Excel 等 20 项功能。"),
+        box = QMessageBox(self)
+        box.setWindowTitle(i18n.translate(f"关于 {APP_NAME}"))
+        box.setIcon(QMessageBox.Information)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setTextFormat(Qt.RichText)
+        box.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        box.setText(
+            f"<p>{APP_NAME} v{__version__}</p>"
+            f"<p>{i18n.translate('基于 PySide6 与 PyMuPDF 的离线 PDF 工具集，全部处理在本地完成，')}"
+            f"{i18n.translate('不上传任何文件。')}</p>"
+            f"<p>{i18n.translate('包含合并、拆分、压缩、加密、涂销、标注、')}"
+            f"{i18n.translate('水印、页码、填写签名、转 Word/Excel 等 20 项功能。')}</p>"
+            f"<p>{i18n.translate('作者网站：')}<a href=\"https://www.qudo.cc\">https://www.qudo.cc</a><br>"
+            f"{i18n.translate('作者邮箱：')}<a href=\"mailto:xuejiazhi@gmail.com\">xuejiazhi@gmail.com</a></p>"
         )
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        if label is not None:
+            label.setOpenExternalLinks(True)
+        box.exec()
 
     # ---------------------------------------------------------------- 工具调度
 

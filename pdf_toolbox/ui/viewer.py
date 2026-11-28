@@ -160,6 +160,7 @@ class PdfView(QGraphicsView):
     zoomChanged = Signal(float)
     pageClicked = Signal(int, QPointF)          # 页索引 + 页内坐标（点）
     pageDoubleClicked = Signal(int, QPointF)
+    fileDropped = Signal(str)
 
     MIN_ZOOM = 0.1
     MAX_ZOOM = 8.0
@@ -184,6 +185,8 @@ class PdfView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self.setBackgroundBrush(QBrush(QColor(82, 86, 89)))
         self.setFrameShape(QGraphicsView.NoFrame)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
 
         self._render_thread = RenderThread(doc, self)
         self._render_thread.pageReady.connect(self._on_page_ready)
@@ -193,6 +196,47 @@ class PdfView(QGraphicsView):
         doc.changed.connect(self._refresh_all)
 
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+
+    @staticmethod
+    def _dropped_pdf_paths(event) -> list[str]:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        return [
+            url.toLocalFile()
+            for url in mime.urls()
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(".pdf")
+        ]
+
+    def _accept_file_drag(self, event) -> None:
+        if self._dropped_pdf_paths(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        self._accept_file_drag(event)
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        self._accept_file_drag(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        paths = self._dropped_pdf_paths(event)
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.fileDropped.emit(paths[0])
+
+    def viewportEvent(self, event) -> bool:  # noqa: N802
+        # QAbstractScrollArea delivers drops over the scrolling area to its viewport.
+        if event.type() in (QEvent.DragEnter, QEvent.DragMove):
+            self._accept_file_drag(event)
+            return True
+        if event.type() == QEvent.Drop:
+            self.dropEvent(event)
+            return True
+        return super().viewportEvent(event)
 
     # ---------------------------------------------------------------- 结构
 

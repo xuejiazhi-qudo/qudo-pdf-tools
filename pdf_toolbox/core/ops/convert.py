@@ -72,6 +72,9 @@ def _word_editable(
     try:
         from pdf2docx import Converter
     except Exception:
+        Converter = None
+
+    if Converter is None:
         # 打包版排除了 cv2/onnxruntime，pdf2docx 无法导入，走原生实现
         _word_editable_native(src_path, output, pages, password, pr)
         return
@@ -126,8 +129,11 @@ def _word_editable_native(
     pr: Progress,
 ) -> None:
     """不依赖 pdf2docx 的可编辑导出：文本块 + 表格按阅读顺序写入 DOCX。"""
+    import io
+
     import docx
-    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt
 
     doc = _open(src_path, password)
     try:
@@ -140,8 +146,6 @@ def _word_editable_native(
             pr.step(k, total, f"第 {i + 1} 页")
             if not 0 <= i < doc.page_count:
                 continue
-            if k:
-                out.add_page_break()
             page = doc.load_page(i)
 
             tables = []
@@ -157,17 +161,39 @@ def _word_editable_native(
                 b for b in page.get_text("blocks")
                 if b[6] == 0 and (b[4] or "").strip()
             ]
+            image_blocks = [
+                b for b in page.get_text("dict")["blocks"]
+                if b.get("type") == 1 and b.get("image")
+            ]
 
-            def _inside(block_bbox) -> Optional[dict]:
-                bb = pymupdf.Rect(block_bbox[:4])
-                for tb in tables:
-                    if tb["bbox"].contains(bb) or (bb & tb["bbox"]).get_area() > bb.get_area() * 0.6:
-                        return tb
-                return None
+            items = [(b[1], b[0], "text", b) for b in blocks]
+            items.extend(
+                (b["bbox"][1], b["bbox"][0], "image", b)
+                for b in image_blocks
+            )
+            for _top, _left, kind, block in sorted(items, key=lambda item: item[:2]):
+                if kind == "image":
+                    pix = pymupdf.Pixmap(block["image"])
+                    if block.get("mask"):
+                        try:
+                            pix = pymupdf.Pixmap(pix, pymupdf.Pixmap(block["mask"]))
+                        except Exception:  # noqa: BLE001
+                            pass
+                    image_data = io.BytesIO(pix.tobytes("png"))
+                    bbox = pymupdf.Rect(block["bbox"])
+                    max_width = max(72.0, page.rect.width - 144.0)
+                    width = min(bbox.width, max_width) / 72.0
+                    paragraph = out.add_paragraph()
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    paragraph.add_run().add_picture(image_data, width=Inches(width))
+                    continue
 
-            items = sorted(blocks, key=lambda b: (round(b[1], 1), b[0]))
-            for block in items:
-                holder = _inside(block)
+                holder = None
+                bb = pymupdf.Rect(block[:4])
+                for table_data in tables:
+                    if table_data["bbox"].contains(bb) or (bb & table_data["bbox"]).get_area() > bb.get_area() * 0.6:
+                        holder = table_data
+                        break
                 if holder is not None:
                     if not holder["done"]:
                         holder["done"] = True
@@ -194,7 +220,13 @@ def _word_editable_native(
                             table.cell(r, c).text = row[c] if c < len(row) else ""
 
         pr.report(90, "写出 DOCX")
-        out.save(output)
+        try:
+            out.save(output)
+        except PermissionError:
+            raise PermissionError(
+                f"无法写入 Word 文件：{output}\n"
+                "如果该文件已在 Word 中打开，请先关闭它；也可以选择其他保存位置或文件名。"
+            ) from None
     finally:
         doc.close()
 
